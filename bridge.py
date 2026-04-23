@@ -85,7 +85,7 @@ def midi_listener(loop):
     with mido.open_input(MIDI_IN) as port:
         print(f"Écoute {MIDI_IN}...")
         for msg in port:
-            if msg.type == "timing_clock":
+            if msg.type == "clock":
                 if time.time() < clock_slave_until:
                     continue
                 now = time.time()
