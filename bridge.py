@@ -98,6 +98,7 @@ def midi_listener(loop):
                         if len(clock_intervals) >= 8:
                             mean = sum(clock_intervals) / len(clock_intervals)
                             bpm = round(60.0 / (mean * 24), 1)
+                            print(f"\rBPM : {bpm}    ", end="", flush=True)
                             changed = last_bpm_sent is None or abs(bpm - last_bpm_sent) >= 0.5
                             throttled = now - last_bpm_time >= 0.5
                             if changed and throttled:
