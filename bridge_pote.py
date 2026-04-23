@@ -5,14 +5,12 @@ import asyncio
 import websockets
 import json
 import threading
-import socket
 import time
 
 SERVER = "ws://176.159.207.97:8080"
 MY_ID = "pc_b"
 MIDI_IN = "FL Out 1"
 MIDI_OUT = "FL In 1"
-UDP_PORT = 9999
 
 apply_until = 0.0
 clock_slave_until = 0.0
@@ -77,26 +75,40 @@ async def websocket_handler():
             print(f"Déconnecté ({e}) — reconnexion dans 3s...")
             await asyncio.sleep(3)
 
-def udp_bpm_listener(loop):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(('127.0.0.1', UDP_PORT))
-    print(f"Écoute BPM sur UDP :{UDP_PORT}...")
-    while True:
-        try:
-            data, _ = sock.recvfrom(64)
-            if time.time() < clock_slave_until:
-                continue
-            bpm = round(float(data.decode()), 1)
-            print(f"\rBPM : {bpm}    ", end="", flush=True)
-            asyncio.run_coroutine_threadsafe(event_queue.put(("BPM", bpm)), loop)
-        except Exception:
-            pass
-
 def midi_listener(loop):
     last = None
+    last_bpm_sent = None
+    last_bpm_time = 0.0
+    clock_intervals = []
+    last_clock_time = None
+
     with mido.open_input(MIDI_IN) as port:
         print(f"Écoute MIDI {MIDI_IN}...")
         for msg in port:
+            if msg.type == "clock":
+                if time.time() < clock_slave_until:
+                    continue
+                now = time.time()
+                if last_clock_time is not None:
+                    interval = now - last_clock_time
+                    if 0.001 < interval < 0.5:
+                        clock_intervals.append(interval)
+                        if len(clock_intervals) > 96:
+                            clock_intervals = clock_intervals[-96:]
+                        if len(clock_intervals) >= 48:
+                            mean = sum(clock_intervals) / len(clock_intervals)
+                            bpm = round(60.0 / (mean * 24))
+                            print(f"\rBPM : {bpm}    ", end="", flush=True)
+                            throttled = now - last_bpm_time >= 1.0
+                            if last_bpm_sent != bpm and throttled:
+                                last_bpm_sent = bpm
+                                last_bpm_time = now
+                                asyncio.run_coroutine_threadsafe(
+                                    event_queue.put(("BPM", bpm)), loop
+                                )
+                last_clock_time = now
+                continue
+
             if time.time() < apply_until:
                 print(f"[bloqué] {msg.type} ignoré (anti-boucle)")
                 continue
@@ -113,7 +125,6 @@ async def main():
     global midi_out_port
     midi_out_port = mido.open_output(MIDI_OUT)
     loop = asyncio.get_event_loop()
-    threading.Thread(target=udp_bpm_listener, args=(loop,), daemon=True).start()
     threading.Thread(target=midi_listener, args=(loop,), daemon=True).start()
     try:
         await websocket_handler()
