@@ -1,3 +1,5 @@
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 import mido
 import asyncio
 import websockets
@@ -5,10 +7,10 @@ import json
 import threading
 import time
 
-SERVER = "ws://TON_IP_PUBLIQUE:8080"  # remplacer par l'IP publique du PC A
+SERVER = "ws://176.159.207.97:8080"
 MY_ID = "pc_b"
-MIDI_IN = "FL Out 2"   # port où FL Studio envoie le clock
-MIDI_OUT = "FL In 0"   # port où FL Studio reçoit les commandes
+MIDI_IN = "FL Out 1"   # port où FL Studio envoie le clock
+MIDI_OUT = "FL In 1"   # port où FL Studio reçoit les commandes
 
 apply_until = 0.0
 
