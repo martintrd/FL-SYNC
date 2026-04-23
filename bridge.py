@@ -16,31 +16,36 @@ event_queue = asyncio.Queue()
 
 async def websocket_handler():
     global apply_until
-    async with websockets.connect(SERVER) as ws:
-        print("Connecté au serveur ✓")
+    while True:
+        try:
+            async with websockets.connect(SERVER) as ws:
+                print("Connecté au serveur ✓")
 
-        async def sender():
-            while True:
-                op = await event_queue.get()
-                await ws.send(json.dumps({"op": op, "from": MY_ID}))
-                print(f"Envoyé : {op}")
+                async def sender():
+                    while True:
+                        op = await event_queue.get()
+                        await ws.send(json.dumps({"op": op, "from": MY_ID}))
+                        print(f"Envoyé : {op}")
 
-        async def receiver():
-            global apply_until
-            async for raw in ws:
-                event = json.loads(raw)
-                if event.get("from") == MY_ID:
-                    continue
-                op = event.get("op")
-                print(f"Reçu : {op} — blocage MIDI 1s")
-                apply_until = time.time() + 1.0
-                with mido.open_output(MIDI_OUT) as port:
-                    if op == "PLAY":
-                        port.send(mido.Message.from_bytes([0xFA]))
-                    elif op == "STOP":
-                        port.send(mido.Message.from_bytes([0xFC]))
+                async def receiver():
+                    global apply_until
+                    async for raw in ws:
+                        event = json.loads(raw)
+                        if event.get("from") == MY_ID:
+                            continue
+                        op = event.get("op")
+                        print(f"Reçu : {op} — blocage MIDI 1s")
+                        apply_until = time.time() + 1.0
+                        with mido.open_output(MIDI_OUT) as port:
+                            if op == "PLAY":
+                                port.send(mido.Message.from_bytes([0xFA]))
+                            elif op == "STOP":
+                                port.send(mido.Message.from_bytes([0xFC]))
 
-        await asyncio.gather(sender(), receiver())
+                await asyncio.gather(sender(), receiver())
+        except Exception as e:
+            print(f"Déconnecté ({e}) — reconnexion dans 3s...")
+            await asyncio.sleep(3)
 
 def midi_listener(loop):
     last = None
