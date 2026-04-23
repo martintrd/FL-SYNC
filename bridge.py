@@ -12,8 +12,8 @@ MY_ID = "pc_a"
 MIDI_IN = "FL Out 1"
 MIDI_OUT = "FL In 1"
 
-apply_until = 0.0       # bloque PLAY/STOP reçus depuis FL (anti-boucle)
-clock_slave_until = 0.0 # bloque envoi BPM quand on reçoit le BPM du pote
+apply_until = 0.0
+clock_slave_until = 0.0
 
 current_generated_bpm = None
 clock_task = None
@@ -57,13 +57,13 @@ async def websocket_handler():
                         op = event.get("op")
                         if op == "BPM":
                             bpm = event["bpm"]
-                            print(f"Reçu BPM : {bpm} — génération clock MIDI")
+                            print(f"\nReçu BPM : {bpm} — génération clock MIDI")
                             clock_slave_until = time.time() + 3.0
                             current_generated_bpm = bpm
                             if clock_task is None or clock_task.done():
                                 clock_task = asyncio.create_task(run_clock_generator())
                         elif op in ("PLAY", "STOP"):
-                            print(f"Reçu : {op} — blocage MIDI 1s")
+                            print(f"\nReçu : {op} — blocage MIDI 1s")
                             apply_until = time.time() + 1.0
                             if op == "PLAY":
                                 midi_out_port.send(mido.Message.from_bytes([0xFA]))
@@ -77,40 +77,19 @@ async def websocket_handler():
 
 def midi_listener(loop):
     last = None
-    last_bpm_sent = None
-    last_bpm_time = 0.0
-    last_bpm_display = 0.0
-    clock_intervals = []
-    last_clock_time = None
 
     with mido.open_input(MIDI_IN) as port:
         print(f"Écoute {MIDI_IN}...")
         for msg in port:
-            if msg.type == "clock":
+            if msg.type == "sysex":
                 if time.time() < clock_slave_until:
                     continue
-                now = time.time()
-                if last_clock_time is not None:
-                    interval = now - last_clock_time
-                    if 0.001 < interval < 0.5:
-                        clock_intervals.append(interval)
-                        if len(clock_intervals) > 96:
-                            clock_intervals = clock_intervals[-96:]
-                        if len(clock_intervals) >= 48:
-                            mean = sum(clock_intervals) / len(clock_intervals)
-                            bpm = round(60.0 / (mean * 24), 1)
-                            if now - last_bpm_display >= 1.0:
-                                print(f"\rBPM : {bpm}    ", end="", flush=True)
-                                last_bpm_display = now
-                            changed = last_bpm_sent is None or abs(bpm - last_bpm_sent) >= 0.5
-                            throttled = now - last_bpm_time >= 1.0
-                            if changed and throttled:
-                                last_bpm_sent = bpm
-                                last_bpm_time = now
-                                asyncio.run_coroutine_threadsafe(
-                                    event_queue.put(("BPM", bpm)), loop
-                                )
-                last_clock_time = now
+                data = msg.data
+                if len(data) >= 4 and data[0] == 0x7D and data[1] == 0x42:
+                    bpm_val = (data[2] << 7) | data[3]
+                    bpm = round(bpm_val / 10.0, 1)
+                    print(f"\rBPM : {bpm}    ", end="", flush=True)
+                    asyncio.run_coroutine_threadsafe(event_queue.put(("BPM", bpm)), loop)
                 continue
 
             if time.time() < apply_until:
