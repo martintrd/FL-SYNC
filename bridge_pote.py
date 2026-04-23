@@ -79,6 +79,7 @@ def midi_listener(loop):
     last = None
     last_bpm_sent = None
     last_bpm_time = 0.0
+    last_bpm_display = 0.0
     clock_intervals = []
     last_clock_time = None
 
@@ -93,14 +94,16 @@ def midi_listener(loop):
                     interval = now - last_clock_time
                     if 0.001 < interval < 0.5:
                         clock_intervals.append(interval)
-                        if len(clock_intervals) > 24:
-                            clock_intervals = clock_intervals[-24:]
-                        if len(clock_intervals) >= 8:
+                        if len(clock_intervals) > 96:
+                            clock_intervals = clock_intervals[-96:]
+                        if len(clock_intervals) >= 48:
                             mean = sum(clock_intervals) / len(clock_intervals)
                             bpm = round(60.0 / (mean * 24), 1)
-                            print(f"\rBPM : {bpm}    ", end="", flush=True)
+                            if now - last_bpm_display >= 1.0:
+                                print(f"\rBPM : {bpm}    ", end="", flush=True)
+                                last_bpm_display = now
                             changed = last_bpm_sent is None or abs(bpm - last_bpm_sent) >= 0.5
-                            throttled = now - last_bpm_time >= 0.5
+                            throttled = now - last_bpm_time >= 1.0
                             if changed and throttled:
                                 last_bpm_sent = bpm
                                 last_bpm_time = now
