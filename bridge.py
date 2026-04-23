@@ -5,6 +5,8 @@ import asyncio
 import websockets
 import json
 import threading
+import base64
+import os
 import time
 
 SERVER = "ws://localhost:8080"
@@ -12,8 +14,13 @@ MY_ID = "pc_a"
 MIDI_IN = "FL Out 1"
 MIDI_OUT = "FL In 1"
 
-apply_until = 0.0
+# Chemin vers ton projet FL Studio (laisser vide pour désactiver)
+FLP_PATH     = r""  # ex: r"C:\Users\flyxe\Documents\projects\mon_projet.flp"
+FLP_RECEIVED = r"C:\Users\flyxe\Desktop\received_project.flp"
+
+apply_until    = 0.0
 clock_slave_until = 0.0
+flp_slave_until   = 0.0
 
 current_generated_bpm = None
 clock_task = None
@@ -31,10 +38,10 @@ async def run_clock_generator():
         await asyncio.sleep(60.0 / (bpm * 24))
 
 async def websocket_handler():
-    global apply_until, clock_slave_until, current_generated_bpm, clock_task
+    global apply_until, clock_slave_until, flp_slave_until, current_generated_bpm, clock_task
     while True:
         try:
-            async with websockets.connect(SERVER) as ws:
+            async with websockets.connect(SERVER, max_size=50*1024*1024) as ws:
                 print("Connecté au serveur ✓")
 
                 async def sender():
@@ -43,19 +50,28 @@ async def websocket_handler():
                         if isinstance(msg, tuple) and msg[0] == "BPM":
                             payload = {"op": "BPM", "bpm": msg[1], "from": MY_ID}
                             print(f"\nEnvoyé BPM : {msg[1]}")
+                        elif isinstance(msg, tuple) and msg[0] == "FLP":
+                            payload = {"op": "FLP", "data": msg[1], "from": MY_ID}
+                            print(f"\nProjet envoyé ✓")
                         else:
                             payload = {"op": msg, "from": MY_ID}
                             print(f"\nEnvoyé : {msg}")
                         await ws.send(json.dumps(payload))
 
                 async def receiver():
-                    global apply_until, clock_slave_until, current_generated_bpm, clock_task
+                    global apply_until, clock_slave_until, flp_slave_until, current_generated_bpm, clock_task
                     async for raw in ws:
                         event = json.loads(raw)
                         if event.get("from") == MY_ID:
                             continue
                         op = event.get("op")
-                        if op == "BPM":
+                        if op == "FLP":
+                            flp_slave_until = time.time() + 5.0
+                            data = base64.b64decode(event["data"])
+                            with open(FLP_RECEIVED, "wb") as f:
+                                f.write(data)
+                            print(f"\nProjet reçu → {FLP_RECEIVED}")
+                        elif op == "BPM":
                             bpm = event["bpm"]
                             print(f"\nReçu BPM : {bpm} — génération clock MIDI")
                             clock_slave_until = time.time() + 3.0
@@ -74,6 +90,32 @@ async def websocket_handler():
         except Exception as e:
             print(f"Déconnecté ({e}) — reconnexion dans 3s...")
             await asyncio.sleep(3)
+
+def flp_watcher(loop):
+    if not FLP_PATH:
+        return
+    last_mtime = 0
+    print(f"Surveillance projet : {FLP_PATH}")
+    while True:
+        time.sleep(1)
+        if time.time() < flp_slave_until:
+            try:
+                last_mtime = os.path.getmtime(FLP_PATH)
+            except:
+                pass
+            continue
+        try:
+            mtime = os.path.getmtime(FLP_PATH)
+            if last_mtime != 0 and mtime != last_mtime:
+                last_mtime = mtime
+                time.sleep(0.3)  # attendre fin d'écriture
+                with open(FLP_PATH, "rb") as f:
+                    data = base64.b64encode(f.read()).decode()
+                asyncio.run_coroutine_threadsafe(event_queue.put(("FLP", data)), loop)
+            else:
+                last_mtime = mtime
+        except Exception:
+            pass
 
 def midi_listener(loop):
     last = None
@@ -125,6 +167,7 @@ async def main():
     global midi_out_port
     midi_out_port = mido.open_output(MIDI_OUT)
     loop = asyncio.get_event_loop()
+    threading.Thread(target=flp_watcher, args=(loop,), daemon=True).start()
     threading.Thread(target=midi_listener, args=(loop,), daemon=True).start()
     try:
         await websocket_handler()
