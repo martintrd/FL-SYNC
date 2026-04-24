@@ -11,9 +11,9 @@ import time
 
 SERVER = "ws://localhost:8080"
 MY_ID = "pc_a"
-MIDI_IN        = "FL Out 1"   # clock + play/stop depuis FL Studio
-SCRIPT_MIDI_IN = "FL In 0"   # CC depuis le script FLSync
-MIDI_OUT       = "FL In 1"   # commandes vers FL Studio
+MIDI_IN        = "FL Out 1"
+SCRIPT_MIDI_IN = "FL In 0"
+MIDI_OUT       = "FL In 1"
 
 # Chemin vers ton projet FL Studio (laisser vide pour désactiver la sync .flp)
 FLP_PATH     = r""
@@ -98,7 +98,7 @@ async def websocket_handler():
             print(f"Déconnecté ({e}) — reconnexion dans 3s...")
             await asyncio.sleep(3)
 
-# ── Script listener (FL In 0 — CC depuis FLSync) ─────────────────────────────
+# ── Script listener (FL In 0 — CC depuis FLSync via device.midiOutMsg) ───────
 
 def script_listener(loop):
     bpm_msb = None
@@ -106,7 +106,7 @@ def script_listener(loop):
         print(f"Écoute script sur {SCRIPT_MIDI_IN}...")
         for msg in port:
             if msg.type != "control_change" or msg.channel != 0:
-                continue  # ignore tout ce qui vient de bridge.py lui-même
+                continue
             if msg.control == 0 and msg.value == 1:
                 print("\nScript FLSync actif ✓")
             elif msg.control == 20:
@@ -175,9 +175,9 @@ async def main():
     global midi_out_port
     midi_out_port = mido.open_output(MIDI_OUT)
     loop = asyncio.get_event_loop()
-    threading.Thread(target=flp_watcher,    args=(loop,), daemon=True).start()
-    threading.Thread(target=script_listener, args=(loop,), daemon=True).start()
-    threading.Thread(target=midi_listener,   args=(loop,), daemon=True).start()
+    threading.Thread(target=flp_watcher,     args=(loop,), daemon=True).start()
+    threading.Thread(target=script_listener,  args=(loop,), daemon=True).start()
+    threading.Thread(target=midi_listener,    args=(loop,), daemon=True).start()
     try:
         await websocket_handler()
     finally:
