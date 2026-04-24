@@ -17,7 +17,7 @@ SCRIPT_MIDI_IN = "FL In 0"
 MIDI_OUT       = "FL In 1"
 
 # Chemin où sauvegarder le projet reçu (FL Studio l'ouvrira automatiquement)
-FLP_RECEIVED = r"C:\Users\pote\Desktop\flsync_received.flp"
+FLP_RECEIVED = r"C:\Users\flyxe\Desktop\flsync_received.flp"
 
 # Chemin de ton propre projet à envoyer (laisser vide si tu envoies pas)
 FLP_PATH = r""
