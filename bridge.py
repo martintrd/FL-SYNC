@@ -16,10 +16,11 @@ MIDI_IN        = "FL Out 1"
 SCRIPT_MIDI_IN = "FL In 0"
 MIDI_OUT       = "FL In 1"
 
-# Dossier surveillé : enregistre ton .flp dedans → envoi automatique
-# Exemple : r"C:\FL-SYNC-SHARE"   (laisser vide pour désactiver)
-FLP_WATCH_DIR = r""
-FLP_RECEIVED  = r"C:\Users\flyxe\Desktop\flsync_received.flp"
+# Dossier de tes .flp à envoyer (enregistre dedans dans FL Studio)
+FLP_WATCH_DIR   = r"C:\Users\flyxe\Desktop\FL-SYNC-SHARE"  # ex: r"C:\FL-SYNC-SHARE"
+
+# Dossier où arrivent les .flp du pote (ils gardent leur nom d'origine)
+FLP_RECEIVE_DIR = r"C:\Users\flyxe\Desktop\FL-SYNC-RECEIVE"  # ex: r"C:\FL-SYNC-RECEIVE"
 
 apply_until     = 0.0
 clock_slave_until = 0.0
@@ -111,8 +112,8 @@ async def websocket_handler():
                             payload = {"op": "BPM", "bpm": msg[1], "from": MY_ID}
                             print(f"\nEnvoyé BPM : {msg[1]}")
                         elif isinstance(msg, tuple) and msg[0] == "FLP":
-                            payload = {"op": "FLP", "data": msg[1], "from": MY_ID}
-                            print(f"\nProjet envoyé ✓")
+                            payload = {"op": "FLP", "data": msg[1], "filename": msg[2], "from": MY_ID}
+                            print(f"\nEnvoyé : {msg[2]}")
                         else:
                             payload = {"op": msg, "from": MY_ID}
                             print(f"\nEnvoyé : {msg}")
@@ -128,16 +129,21 @@ async def websocket_handler():
                         op = event.get("op")
                         if op == "FLP":
                             flp_slave_until = time.time() + 5.0
+                            if not FLP_RECEIVE_DIR:
+                                continue
+                            os.makedirs(FLP_RECEIVE_DIR, exist_ok=True)
+                            filename = event.get("filename", "received.flp")
+                            dest = os.path.join(FLP_RECEIVE_DIR, filename)
                             data = base64.b64decode(event["data"])
-                            with open(FLP_RECEIVED, "wb") as f:
+                            with open(dest, "wb") as f:
                                 f.write(data)
-                            print(f"\nProjet reçu ✓")
+                            print(f"\nReçu : {filename}")
                             if not _fl_playing:
                                 threading.Thread(
-                                    target=_open_flp, args=(FLP_RECEIVED,), daemon=True
+                                    target=_open_flp, args=(dest,), daemon=True
                                 ).start()
                             else:
-                                _pending_flp = FLP_RECEIVED
+                                _pending_flp = dest
                                 print("(FL joue → appliqué à l'arrêt)")
                         elif op == "BPM":
                             bpm = event["bpm"]
@@ -238,7 +244,7 @@ def flp_watcher(loop):
                     name = os.path.basename(path)
                     print(f"\nEnvoi {name}...")
                     asyncio.run_coroutine_threadsafe(
-                        event_queue.put(("FLP", data)), loop
+                        event_queue.put(("FLP", data, name)), loop
                     )
                 else:
                     mtimes[path] = mtime
