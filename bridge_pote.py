@@ -11,8 +11,9 @@ import time
 
 SERVER = "ws://176.159.207.97:8080"
 MY_ID = "pc_b"
-MIDI_IN = "FL Out 1"
-MIDI_OUT = "FL In 1"
+MIDI_IN        = "FL Out 1"
+SCRIPT_MIDI_IN = "FL In 0"
+MIDI_OUT       = "FL In 1"
 
 FLP_PATH     = r""
 FLP_RECEIVED = r"C:\Users\pote\Desktop\received_project.flp"
@@ -92,32 +93,34 @@ async def websocket_handler():
             print(f"Déconnecté ({e}) — reconnexion dans 3s...")
             await asyncio.sleep(3)
 
-def midi_listener(loop):
-    last    = None
+def script_listener(loop):
     bpm_msb = None
+    with mido.open_input(SCRIPT_MIDI_IN) as port:
+        print(f"Écoute script sur {SCRIPT_MIDI_IN}...")
+        for msg in port:
+            if msg.type != "control_change" or msg.channel != 0:
+                continue
+            if msg.control == 0 and msg.value == 1:
+                print("\nScript FLSync actif ✓")
+            elif msg.control == 20:
+                bpm_msb = msg.value
+            elif msg.control == 21 and bpm_msb is not None:
+                bpm_val = (bpm_msb << 7) | msg.value
+                bpm = round(bpm_val / 10.0, 1)
+                bpm_msb = None
+                if time.time() >= clock_slave_until:
+                    print(f"\rBPM : {bpm}    ", end="", flush=True)
+                    asyncio.run_coroutine_threadsafe(
+                        event_queue.put(("BPM", bpm)), loop
+                    )
 
+def midi_listener(loop):
+    last = None
     with mido.open_input(MIDI_IN) as port:
         print(f"Écoute MIDI {MIDI_IN}...")
         for msg in port:
-            if msg.type == "control_change" and msg.channel == 0:
-                if msg.control == 0 and msg.value == 1:
-                    print("Script FLSync actif ✓")
-                elif msg.control == 20:
-                    bpm_msb = msg.value
-                elif msg.control == 21 and bpm_msb is not None:
-                    bpm_val = (bpm_msb << 7) | msg.value
-                    bpm = round(bpm_val / 10.0, 1)
-                    bpm_msb = None
-                    if time.time() >= clock_slave_until:
-                        print(f"\rBPM : {bpm}    ", end="", flush=True)
-                        asyncio.run_coroutine_threadsafe(
-                            event_queue.put(("BPM", bpm)), loop
-                        )
-                continue
-
             if msg.type == "clock":
                 continue
-
             if time.time() < apply_until:
                 continue
             if msg.type == "start" and last != "start":
@@ -159,8 +162,9 @@ async def main():
     global midi_out_port
     midi_out_port = mido.open_output(MIDI_OUT)
     loop = asyncio.get_event_loop()
-    threading.Thread(target=flp_watcher,   args=(loop,), daemon=True).start()
-    threading.Thread(target=midi_listener, args=(loop,), daemon=True).start()
+    threading.Thread(target=flp_watcher,    args=(loop,), daemon=True).start()
+    threading.Thread(target=script_listener, args=(loop,), daemon=True).start()
+    threading.Thread(target=midi_listener,   args=(loop,), daemon=True).start()
     try:
         await websocket_handler()
     finally:

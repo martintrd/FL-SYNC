@@ -11,8 +11,9 @@ import time
 
 SERVER = "ws://localhost:8080"
 MY_ID = "pc_a"
-MIDI_IN = "FL Out 1"
-MIDI_OUT = "FL In 1"
+MIDI_IN        = "FL Out 1"   # clock + play/stop depuis FL Studio
+SCRIPT_MIDI_IN = "FL In 0"   # CC depuis le script FLSync
+MIDI_OUT       = "FL In 1"   # commandes vers FL Studio
 
 # Chemin vers ton projet FL Studio (laisser vide pour désactiver la sync .flp)
 FLP_PATH     = r""
@@ -97,38 +98,38 @@ async def websocket_handler():
             print(f"Déconnecté ({e}) — reconnexion dans 3s...")
             await asyncio.sleep(3)
 
-# ── MIDI listener ────────────────────────────────────────────────────────────
+# ── Script listener (FL In 0 — CC depuis FLSync) ─────────────────────────────
+
+def script_listener(loop):
+    bpm_msb = None
+    with mido.open_input(SCRIPT_MIDI_IN) as port:
+        print(f"Écoute script sur {SCRIPT_MIDI_IN}...")
+        for msg in port:
+            if msg.type != "control_change" or msg.channel != 0:
+                continue  # ignore tout ce qui vient de bridge.py lui-même
+            if msg.control == 0 and msg.value == 1:
+                print("\nScript FLSync actif ✓")
+            elif msg.control == 20:
+                bpm_msb = msg.value
+            elif msg.control == 21 and bpm_msb is not None:
+                bpm_val = (bpm_msb << 7) | msg.value
+                bpm = round(bpm_val / 10.0, 1)
+                bpm_msb = None
+                if time.time() >= clock_slave_until:
+                    print(f"\rBPM : {bpm}    ", end="", flush=True)
+                    asyncio.run_coroutine_threadsafe(
+                        event_queue.put(("BPM", bpm)), loop
+                    )
+
+# ── MIDI listener (FL Out 1 — play/stop depuis FL Studio) ────────────────────
 
 def midi_listener(loop):
-    last       = None
-    bpm_msb    = None
-
+    last = None
     with mido.open_input(MIDI_IN) as port:
         print(f"Écoute MIDI {MIDI_IN}...")
         for msg in port:
-
-            # ── BPM depuis le script FLSync (CC ctrl 20/21) ──────────────
-            if msg.type == "control_change" and msg.channel == 0:
-                if msg.control == 0 and msg.value == 1:
-                    print("Script FLSync actif ✓")
-                elif msg.control == 20:
-                    bpm_msb = msg.value
-                elif msg.control == 21 and bpm_msb is not None:
-                    bpm_val = (bpm_msb << 7) | msg.value
-                    bpm = round(bpm_val / 10.0, 1)
-                    bpm_msb = None
-                    if time.time() >= clock_slave_until:
-                        print(f"\rBPM : {bpm}    ", end="", flush=True)
-                        asyncio.run_coroutine_threadsafe(
-                            event_queue.put(("BPM", bpm)), loop
-                        )
-                continue
-
-            # ── Clock (fallback si script pas actif) ─────────────────────
             if msg.type == "clock":
-                continue  # ignoré, BPM vient du script
-
-            # ── Play / Stop ───────────────────────────────────────────────
+                continue
             if time.time() < apply_until:
                 continue
             if msg.type == "start" and last != "start":
@@ -175,7 +176,8 @@ async def main():
     midi_out_port = mido.open_output(MIDI_OUT)
     loop = asyncio.get_event_loop()
     threading.Thread(target=flp_watcher,    args=(loop,), daemon=True).start()
-    threading.Thread(target=midi_listener,  args=(loop,), daemon=True).start()
+    threading.Thread(target=script_listener, args=(loop,), daemon=True).start()
+    threading.Thread(target=midi_listener,   args=(loop,), daemon=True).start()
     try:
         await websocket_handler()
     finally:
