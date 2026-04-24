@@ -16,9 +16,10 @@ MIDI_IN        = "FL Out 1"
 SCRIPT_MIDI_IN = "FL In 0"
 MIDI_OUT       = "FL In 1"
 
-# Chemin vers ton projet FL Studio (laisser vide pour désactiver la sync .flp)
-FLP_PATH     = r""
-FLP_RECEIVED = r"C:\Users\flyxe\Desktop\received_project.flp"
+# Dossier surveillé : enregistre ton .flp dedans → envoi automatique
+# Exemple : r"C:\FL-SYNC-SHARE"   (laisser vide pour désactiver)
+FLP_WATCH_DIR = r""
+FLP_RECEIVED  = r"C:\Users\flyxe\Desktop\flsync_received.flp"
 
 apply_until     = 0.0
 clock_slave_until = 0.0
@@ -208,28 +209,39 @@ def midi_listener(loop):
 # ── FLP watcher ──────────────────────────────────────────────────────────────
 
 def flp_watcher(loop):
-    if not FLP_PATH:
+    if not FLP_WATCH_DIR:
         return
-    last_mtime = 0
-    print(f"Surveillance projet : {FLP_PATH}")
+    os.makedirs(FLP_WATCH_DIR, exist_ok=True)
+    print(f"Surveillance dossier : {FLP_WATCH_DIR}")
+    mtimes = {}  # {filepath: mtime}
     while True:
         time.sleep(1)
-        if time.time() < flp_slave_until:
-            try:
-                last_mtime = os.path.getmtime(FLP_PATH)
-            except Exception:
-                pass
-            continue
         try:
-            mtime = os.path.getmtime(FLP_PATH)
-            if last_mtime != 0 and mtime != last_mtime:
-                last_mtime = mtime
-                time.sleep(0.3)
-                with open(FLP_PATH, "rb") as f:
-                    data = base64.b64encode(f.read()).decode()
-                asyncio.run_coroutine_threadsafe(event_queue.put(("FLP", data)), loop)
-            else:
-                last_mtime = mtime
+            flp_files = [
+                os.path.join(FLP_WATCH_DIR, f)
+                for f in os.listdir(FLP_WATCH_DIR)
+                if f.lower().endswith('.flp')
+            ]
+            for path in flp_files:
+                try:
+                    mtime = os.path.getmtime(path)
+                except Exception:
+                    continue
+                if time.time() < flp_slave_until:
+                    mtimes[path] = mtime
+                    continue
+                if path in mtimes and mtimes[path] != mtime:
+                    mtimes[path] = mtime
+                    time.sleep(0.3)
+                    with open(path, "rb") as f:
+                        data = base64.b64encode(f.read()).decode()
+                    name = os.path.basename(path)
+                    print(f"\nEnvoi {name}...")
+                    asyncio.run_coroutine_threadsafe(
+                        event_queue.put(("FLP", data)), loop
+                    )
+                else:
+                    mtimes[path] = mtime
         except Exception:
             pass
 
