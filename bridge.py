@@ -16,11 +16,9 @@ MIDI_IN        = "FL Out 1"
 SCRIPT_MIDI_IN = "FL In 0"
 MIDI_OUT       = "FL In 1"
 
-# Dossier de tes .flp à envoyer (enregistre dedans dans FL Studio)
-FLP_WATCH_DIR   = r"C:\Users\flyxe\Desktop\FL-SYNC-SHARE"  # ex: r"C:\FL-SYNC-SHARE"
-
-# Dossier où arrivent les .flp du pote (ils gardent leur nom d'origine)
-FLP_RECEIVE_DIR = r"C:\Users\flyxe\Desktop\FL-SYNC-RECEIVE"  # ex: r"C:\FL-SYNC-RECEIVE"
+# Dossier partagé : enregistre tes .flp ici ET les fichiers du pote arrivent ici
+# → même dossier pour tout, quand le pote sauvegarde ça revient automatiquement
+FLP_SYNC_DIR = r""  # ex: r"C:\FL-SYNC"
 
 apply_until     = 0.0
 clock_slave_until = 0.0
@@ -129,11 +127,11 @@ async def websocket_handler():
                         op = event.get("op")
                         if op == "FLP":
                             flp_slave_until = time.time() + 5.0
-                            if not FLP_RECEIVE_DIR:
+                            if not FLP_SYNC_DIR:
                                 continue
-                            os.makedirs(FLP_RECEIVE_DIR, exist_ok=True)
+                            os.makedirs(FLP_SYNC_DIR, exist_ok=True)
                             filename = event.get("filename", "received.flp")
-                            dest = os.path.join(FLP_RECEIVE_DIR, filename)
+                            dest = os.path.join(FLP_SYNC_DIR, filename)
                             data = base64.b64decode(event["data"])
                             with open(dest, "wb") as f:
                                 f.write(data)
@@ -215,17 +213,17 @@ def midi_listener(loop):
 # ── FLP watcher ──────────────────────────────────────────────────────────────
 
 def flp_watcher(loop):
-    if not FLP_WATCH_DIR:
+    if not FLP_SYNC_DIR:
         return
-    os.makedirs(FLP_WATCH_DIR, exist_ok=True)
-    print(f"Surveillance dossier : {FLP_WATCH_DIR}")
+    os.makedirs(FLP_SYNC_DIR, exist_ok=True)
+    print(f"Surveillance dossier : {FLP_SYNC_DIR}")
     mtimes = {}  # {filepath: mtime}
     while True:
         time.sleep(1)
         try:
             flp_files = [
-                os.path.join(FLP_WATCH_DIR, f)
-                for f in os.listdir(FLP_WATCH_DIR)
+                os.path.join(FLP_SYNC_DIR, f)
+                for f in os.listdir(FLP_SYNC_DIR)
                 if f.lower().endswith('.flp')
             ]
             for path in flp_files:
