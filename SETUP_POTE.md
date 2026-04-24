@@ -8,14 +8,9 @@ Il contient tout ce qu'il faut faire pour que la sync FL Studio fonctionne.
 ## Ce que fait ce projet
 
 Synchronisation en temps réel entre deux FL Studio via internet :
-- PLAY / STOP bidirectionnel
-- BPM exact bidirectionnel (via script FL Studio)
-- Sync de projet .flp à la sauvegarde (optionnel)
-
-Architecture :
-```
-FL Studio B → loopMIDI → bridge_pote.py → WebSocket → server.js (PC A) → bridge.py → FL Studio A
-```
+- **PLAY / STOP** bidirectionnel (instantané)
+- **BPM** exact bidirectionnel via script FL Studio
+- **Arrangement .flp** : quand PC A fait Ctrl+S → PC B reçoit et FL Studio se recharge automatiquement
 
 ---
 
@@ -27,18 +22,18 @@ Créer exactement ces deux ports virtuels :
 - `FL In`
 - `FL Out`
 
-Laisser loopMIDI ouvert en arrière-plan.
+Laisser loopMIDI ouvert en arrière-plan (cocher "autostart" dans le tray).
 
 ---
 
 ## Étape 2 — Script FL Studio
 
-Copier le fichier `fl_studio_script/device_flsync.py` vers :
+Copier le fichier `fl_studio_script/device_flsync.py` du repo vers :
 ```
 C:\Users\[TON_USERNAME]\Documents\Image-Line\FL Studio\Settings\Hardware\FL SYNC\device_flsync.py
 ```
 
-Le dossier `FL SYNC` est à créer s'il n'existe pas.
+Créer le dossier `FL SYNC` s'il n'existe pas (avec un espace, pas "FLSync").
 
 ---
 
@@ -53,7 +48,7 @@ Le dossier `FL SYNC` est à créer s'il n'existe pas.
 ### Section Input :
 - Sélectionner **FL In**
 - Cocher **Enable**
-- Controller type = **FL SYNC** (le script qu'on vient d'installer)
+- Controller type = **FL SYNC**
 - Port = **1**
 
 ### External sync (en bas) :
@@ -61,37 +56,42 @@ Le dossier `FL SYNC` est à créer s'il n'existe pas.
 
 ### Après config :
 - Cliquer **Update MIDI scripts**
-- La console FL Studio doit afficher : `FLSync: chargé ✓`
+- La console FL Studio doit afficher : `FLSync: chargé ✓` puis `FLSync: BPM → XXX`
 
 ---
 
-## Étape 4 — bridge_pote.py
+## Étape 4 — Dépendances Python
 
-Ouvrir `bridge_pote.py` et vérifier / adapter ces lignes :
-
-```python
-SERVER = "ws://176.159.207.97:8080"  # IP publique du PC A — ne pas changer
-MY_ID  = "pc_b"
-MIDI_IN        = "FL Out 1"   # nom exact du port loopMIDI (vérifier avec mido)
-SCRIPT_MIDI_IN = "FL In 0"    # idem
-MIDI_OUT       = "FL In 1"    # idem
-FLP_RECEIVED   = r"C:\Users\[TON_USERNAME]\Desktop\received_project.flp"
+```
+pip install mido python-rtmidi websockets pywin32
 ```
 
-Pour vérifier les noms exacts des ports MIDI disponibles, lancer :
+`pywin32` est nécessaire pour que le dialog de sauvegarde FL Studio soit auto-cliqué.
+Sans lui ça marche quand même (fallback clavier) mais moins fiable.
+
+---
+
+## Étape 5 — bridge_pote.py
+
+Ouvrir `bridge_pote.py` et adapter ces lignes :
+
+```python
+SERVER = "ws://176.159.207.97:8080"  # IP publique de PC A — ne pas changer
+
+# Où sauvegarder le projet reçu de PC A (FL Studio l'ouvrira automatiquement)
+FLP_RECEIVED = r"C:\Users\[TON_USERNAME]\Desktop\flsync_received.flp"
+
+# Ton propre projet à envoyer vers PC A (laisser vide si tu envoies pas)
+FLP_PATH = r""  # ex: r"C:\Users\[TON_USERNAME]\Documents\projects\mon_projet.flp"
+```
+
+Pour vérifier les noms exacts des ports MIDI :
 ```
 python -c "import mido; print('IN:', mido.get_input_names()); print('OUT:', mido.get_output_names())"
 ```
 
 Les ports `FL In 0`, `FL In 1`, `FL Out 1`, `FL Out 2` doivent apparaître.
-
----
-
-## Étape 5 — Dépendances Python
-
-```
-pip install mido python-rtmidi websockets
-```
+Si les noms sont différents, adapter `MIDI_IN`, `SCRIPT_MIDI_IN`, `MIDI_OUT` dans le script.
 
 ---
 
@@ -114,21 +114,28 @@ BPM : 140.0
 
 ---
 
-## Vérification
+## Comment fonctionne la sync .flp (arrangement)
 
-- Appuyer play sur FL Studio A → FL Studio B démarre aussi
-- Changer le BPM sur FL Studio A → FL Studio B se met à jour
-- Idem dans l'autre sens depuis FL Studio B
+Quand PC A fait **Ctrl+S** dans FL Studio :
+1. `bridge.py` détecte le changement de fichier
+2. Envoie le .flp via WebSocket
+3. `bridge_pote.py` reçoit et sauvegarde dans `FLP_RECEIVED`
+4. Si FL Studio **est stoppé** → ouvre automatiquement le fichier, auto-clique "Non" sur le dialog de sauvegarde → FL Studio recharge sans action manuelle
+5. Si FL Studio **joue** → attend le prochain stop, puis applique
+
+Pour que ça marche dans les deux sens, PC B doit aussi renseigner `FLP_PATH` avec son projet,
+et PC A doit renseigner `FLP_RECEIVED` dans `bridge.py`.
 
 ---
 
 ## Dépannage
 
-**"unknown port"** → les noms de ports dans bridge_pote.py ne correspondent pas.
-Lancer la commande mido de l'étape 4 pour voir les vrais noms.
+**"unknown port"** → les noms de ports ne correspondent pas.
+Lancer la commande mido de l'étape 5 pour voir les vrais noms.
 
-**Rien ne se passe au play** → vérifier que "Send master sync" est coché sur FL Out dans FL Studio.
+**"Script FLSync actif ✓" n'apparaît pas** → vérifier Port = 1 sur FL In (input) ET Port = 1 sur FL Out (output) dans MIDI Settings. Redémarrer FL Studio.
 
-**"Script FLSync actif ✓" n'apparaît pas** → vérifier le Controller type = "FL SYNC" dans les MIDI settings et recliquer "Update MIDI scripts". Redémarrer FL Studio si nécessaire.
+**Le BPM ne sync pas** → vérifier que "Send master sync" est coché sur FL Out.
 
-**BPM ne se sync pas** → vérifier Port = 1 sur FL In (input) ET sur FL Out (output) dans FL Studio MIDI Settings.
+**FL Studio ne se recharge pas automatiquement** → vérifier que `pywin32` est installé (`pip install pywin32`).
+Si le dialog "Enregistrer ?" reste ouvert, appuyer manuellement sur "Non".
