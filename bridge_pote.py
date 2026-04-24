@@ -23,23 +23,31 @@ clock_slave_until = 0.0
 flp_slave_until   = 0.0
 
 current_generated_bpm = None
-clock_task    = None
 midi_out_port = None
 
 event_queue = asyncio.Queue()
 
-async def run_clock_generator():
-    global current_generated_bpm
+def clock_generator_thread():
+    next_t = time.perf_counter()
     while True:
         bpm = current_generated_bpm
         if bpm is None:
-            break
-        midi_out_port.send(mido.Message.from_bytes([0xF8]))
-        await asyncio.sleep(60.0 / (bpm * 24))
+            time.sleep(0.005)
+            next_t = time.perf_counter()
+            continue
+        interval = 60.0 / (bpm * 24)
+        next_t += interval
+        remaining = next_t - time.perf_counter()
+        if remaining > 0.002:
+            time.sleep(remaining - 0.002)
+        while time.perf_counter() < next_t:
+            pass
+        if current_generated_bpm is not None:
+            midi_out_port.send(mido.Message.from_bytes([0xF8]))
 
 async def websocket_handler():
     global apply_until, clock_slave_until, flp_slave_until
-    global current_generated_bpm, clock_task
+    global current_generated_bpm
     while True:
         try:
             async with websockets.connect(SERVER, max_size=50*1024*1024) as ws:
@@ -61,7 +69,7 @@ async def websocket_handler():
 
                 async def receiver():
                     global apply_until, clock_slave_until, flp_slave_until
-                    global current_generated_bpm, clock_task
+                    global current_generated_bpm
                     async for raw in ws:
                         event = json.loads(raw)
                         if event.get("from") == MY_ID:
@@ -78,8 +86,6 @@ async def websocket_handler():
                             print(f"\nReçu BPM : {bpm} — génération clock MIDI")
                             clock_slave_until = time.time() + 3.0
                             current_generated_bpm = bpm
-                            if clock_task is None or clock_task.done():
-                                clock_task = asyncio.create_task(run_clock_generator())
                         elif op in ("PLAY", "STOP"):
                             print(f"\nReçu : {op} — blocage MIDI 1s")
                             apply_until = time.time() + 1.0
@@ -162,6 +168,7 @@ async def main():
     global midi_out_port
     midi_out_port = mido.open_output(MIDI_OUT)
     loop = asyncio.get_event_loop()
+    threading.Thread(target=clock_generator_thread, daemon=True).start()
     threading.Thread(target=flp_watcher,    args=(loop,), daemon=True).start()
     threading.Thread(target=script_listener, args=(loop,), daemon=True).start()
     threading.Thread(target=midi_listener,   args=(loop,), daemon=True).start()
