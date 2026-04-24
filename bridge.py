@@ -8,6 +8,7 @@ import threading
 import base64
 import os
 import time
+import ctypes
 
 SERVER = "ws://localhost:8080"
 MY_ID = "pc_a"
@@ -24,9 +25,52 @@ clock_slave_until = 0.0
 flp_slave_until   = 0.0
 
 current_generated_bpm = None
-midi_out_port = None
+midi_out_port         = None
+
+_fl_playing  = False
+_pending_flp = None
 
 event_queue = asyncio.Queue()
+
+# ── Rechargement FL Studio ────────────────────────────────────────────────────
+
+def _dismiss_save_dialog():
+    deadline = time.time() + 8.0
+    while time.time() < deadline:
+        try:
+            import win32gui, win32con, win32api
+            clicked = [False]
+            def _check_btn(hwnd, _):
+                txt = win32gui.GetWindowText(hwnd).strip().lower().replace('&', '')
+                if txt in ('no', 'non', "don't save", 'ne pas enregistrer'):
+                    win32api.PostMessage(hwnd, win32con.BM_CLICK, 0, 0)
+                    clicked[0] = True
+                    return False
+                return True
+            def _check_win(hwnd, _):
+                if clicked[0]: return False
+                if win32gui.IsWindowVisible(hwnd) and win32gui.GetClassName(hwnd) == '#32770':
+                    try: win32gui.EnumChildWindows(hwnd, _check_btn, None)
+                    except Exception: pass
+                return True
+            win32gui.EnumWindows(_check_win, None)
+            if clicked[0]:
+                print("Dialog dismissé ✓")
+                return
+        except ImportError:
+            time.sleep(0.5)
+            u32 = ctypes.windll.user32
+            u32.keybd_event(0x12, 0, 0, 0)
+            u32.keybd_event(0x4E, 0, 0, 0)
+            u32.keybd_event(0x4E, 0, 2, 0)
+            u32.keybd_event(0x12, 0, 2, 0)
+            return
+        time.sleep(0.15)
+
+def _open_flp(path):
+    print(f"\nOuverture dans FL Studio : {path}")
+    threading.Thread(target=_dismiss_save_dialog, daemon=True).start()
+    ctypes.windll.shell32.ShellExecuteW(None, "open", path, None, None, 1)
 
 # ── Clock generator — thread précis avec perf_counter ───────────────────────
 
@@ -75,7 +119,7 @@ async def websocket_handler():
 
                 async def receiver():
                     global apply_until, clock_slave_until, flp_slave_until
-                    global current_generated_bpm
+                    global current_generated_bpm, _pending_flp
                     async for raw in ws:
                         event = json.loads(raw)
                         if event.get("from") == MY_ID:
@@ -86,7 +130,14 @@ async def websocket_handler():
                             data = base64.b64decode(event["data"])
                             with open(FLP_RECEIVED, "wb") as f:
                                 f.write(data)
-                            print(f"\nProjet reçu → {FLP_RECEIVED}")
+                            print(f"\nProjet reçu ✓")
+                            if not _fl_playing:
+                                threading.Thread(
+                                    target=_open_flp, args=(FLP_RECEIVED,), daemon=True
+                                ).start()
+                            else:
+                                _pending_flp = FLP_RECEIVED
+                                print("(FL joue → appliqué à l'arrêt)")
                         elif op == "BPM":
                             bpm = event["bpm"]
                             print(f"\nReçu BPM : {bpm} — génération clock MIDI")
@@ -131,6 +182,7 @@ def script_listener(loop):
 # ── MIDI listener (FL Out 1 — play/stop depuis FL Studio) ────────────────────
 
 def midi_listener(loop):
+    global _fl_playing, _pending_flp
     last = None
     with mido.open_input(MIDI_IN) as port:
         print(f"Écoute MIDI {MIDI_IN}...")
@@ -140,13 +192,18 @@ def midi_listener(loop):
             if time.time() < apply_until:
                 continue
             if msg.type == "start" and last != "start":
+                _fl_playing = True
                 print("PLAY détecté !")
                 asyncio.run_coroutine_threadsafe(event_queue.put("PLAY"), loop)
                 last = "start"
             elif msg.type == "stop" and last != "stop":
+                _fl_playing = False
                 print("STOP détecté !")
                 asyncio.run_coroutine_threadsafe(event_queue.put("STOP"), loop)
                 last = "stop"
+                if _pending_flp:
+                    path, _pending_flp = _pending_flp, None
+                    threading.Thread(target=_open_flp, args=(path,), daemon=True).start()
 
 # ── FLP watcher ──────────────────────────────────────────────────────────────
 
