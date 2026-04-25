@@ -224,82 +224,67 @@ def midi_listener(loop):
                     path, _pending_flp = _pending_flp, None
                     threading.Thread(target=_open_flp, args=(path,), daemon=True).start()
 
-# ── Samples watcher ──────────────────────────────────────────────────────────
+# ── Sync watcher (.flp + audio dans FLP_SYNC_DIR, samples dans SAMPLES_SYNC_DIR)
 
 _AUDIO_EXTS = {'.wav', '.mp3', '.flac', '.ogg', '.aiff', '.aif', '.w64'}
 
-def samples_watcher(loop):
-    if not SAMPLES_SYNC_DIR:
-        return
-    os.makedirs(SAMPLES_SYNC_DIR, exist_ok=True)
-    print(f"Surveillance samples : {SAMPLES_SYNC_DIR}")
-    mtimes = {}
-    while True:
-        time.sleep(2)
-        try:
-            for root, _, files in os.walk(SAMPLES_SYNC_DIR):
-                for fname in files:
-                    if not any(fname.lower().endswith(e) for e in _AUDIO_EXTS):
-                        continue
-                    path = os.path.join(root, fname)
-                    rel  = os.path.relpath(path, SAMPLES_SYNC_DIR)
-                    try:
-                        mtime = os.path.getmtime(path)
-                        size  = os.path.getsize(path)
-                    except Exception:
-                        continue
-                    if rel in mtimes and mtimes[rel] != mtime:
-                        mtimes[rel] = mtime
-                        if size > SAMPLES_MAX_MB * 1024 * 1024:
-                            print(f"\nSample ignoré (>{SAMPLES_MAX_MB}MB) : {rel}")
-                            continue
-                        time.sleep(0.2)
-                        with open(path, "rb") as f:
-                            data = base64.b64encode(f.read()).decode()
-                        asyncio.run_coroutine_threadsafe(
-                            event_queue.put(("SAMPLE", data, rel)), loop
-                        )
-                    else:
-                        mtimes[rel] = mtime
-        except Exception:
-            pass
-
-# ── FLP watcher ──────────────────────────────────────────────────────────────
+def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
+    """Scan un dossier récursivement et envoie les fichiers nouveaux/modifiés."""
+    for root, _, files in os.walk(base_dir):
+        for fname in files:
+            path = os.path.join(root, fname)
+            ext  = os.path.splitext(fname)[1].lower()
+            is_flp    = ext == '.flp'
+            is_audio  = ext in _AUDIO_EXTS
+            if not is_flp and not is_audio:
+                continue
+            try:
+                mtime = os.path.getmtime(path)
+                size  = os.path.getsize(path)
+            except Exception:
+                continue
+            rel = os.path.relpath(path, base_dir)
+            key = base_dir + "|" + rel
+            if key in mtimes and mtimes[key] != mtime:
+                mtimes[key] = mtime
+                if time.time() < flp_slave_until and is_flp_dir and is_flp:
+                    continue
+                if is_audio and size > SAMPLES_MAX_MB * 1024 * 1024:
+                    print(f"\nSample ignoré (>{SAMPLES_MAX_MB}MB) : {rel}")
+                    continue
+                time.sleep(0.2)
+                with open(path, "rb") as f:
+                    data = base64.b64encode(f.read()).decode()
+                if is_flp:
+                    print(f"\nEnvoi FLP : {fname}")
+                    asyncio.run_coroutine_threadsafe(
+                        event_queue.put(("FLP", data, fname)), loop
+                    )
+                else:
+                    print(f"\nEnvoi sample : {rel}")
+                    asyncio.run_coroutine_threadsafe(
+                        event_queue.put(("SAMPLE", data, rel)), loop
+                    )
+            else:
+                mtimes[key] = mtime
 
 def flp_watcher(loop):
-    if not FLP_SYNC_DIR:
+    if not FLP_SYNC_DIR and not SAMPLES_SYNC_DIR:
         return
-    os.makedirs(FLP_SYNC_DIR, exist_ok=True)
-    print(f"Surveillance dossier : {FLP_SYNC_DIR}")
-    mtimes = {}  # {filepath: mtime}
+    if FLP_SYNC_DIR:
+        os.makedirs(FLP_SYNC_DIR, exist_ok=True)
+        print(f"Surveillance projet : {FLP_SYNC_DIR}")
+    if SAMPLES_SYNC_DIR:
+        os.makedirs(SAMPLES_SYNC_DIR, exist_ok=True)
+        print(f"Surveillance samples : {SAMPLES_SYNC_DIR}")
+    mtimes = {}
     while True:
         time.sleep(1)
         try:
-            flp_files = [
-                os.path.join(FLP_SYNC_DIR, f)
-                for f in os.listdir(FLP_SYNC_DIR)
-                if f.lower().endswith('.flp')
-            ]
-            for path in flp_files:
-                try:
-                    mtime = os.path.getmtime(path)
-                except Exception:
-                    continue
-                if time.time() < flp_slave_until:
-                    mtimes[path] = mtime
-                    continue
-                if path in mtimes and mtimes[path] != mtime:
-                    mtimes[path] = mtime
-                    time.sleep(0.3)
-                    with open(path, "rb") as f:
-                        data = base64.b64encode(f.read()).decode()
-                    name = os.path.basename(path)
-                    print(f"\nEnvoi {name}...")
-                    asyncio.run_coroutine_threadsafe(
-                        event_queue.put(("FLP", data, name)), loop
-                    )
-                else:
-                    mtimes[path] = mtime
+            if FLP_SYNC_DIR:
+                _scan_dir(FLP_SYNC_DIR, mtimes, loop, is_flp_dir=True)
+            if SAMPLES_SYNC_DIR and SAMPLES_SYNC_DIR != FLP_SYNC_DIR:
+                _scan_dir(SAMPLES_SYNC_DIR, mtimes, loop, is_flp_dir=False)
         except Exception:
             pass
 
@@ -309,9 +294,8 @@ async def main():
     global midi_out_port
     midi_out_port = mido.open_output(MIDI_OUT)
     loop = asyncio.get_event_loop()
-    threading.Thread(target=clock_generator_thread,  daemon=True).start()
-    threading.Thread(target=samples_watcher, args=(loop,), daemon=True).start()
-    threading.Thread(target=flp_watcher,     args=(loop,), daemon=True).start()
+    threading.Thread(target=clock_generator_thread, daemon=True).start()
+    threading.Thread(target=flp_watcher,    args=(loop,), daemon=True).start()
     threading.Thread(target=script_listener,  args=(loop,), daemon=True).start()
     threading.Thread(target=midi_listener,    args=(loop,), daemon=True).start()
     try:
