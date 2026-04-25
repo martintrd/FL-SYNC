@@ -18,10 +18,10 @@ SCRIPT_MIDI_IN = "FL In 0"
 MIDI_OUT       = "FL In 1"
 
 # Dossier partagé .flp
-FLP_SYNC_DIR = r""  # ex: r"C:\FL-SYNC"
+FLP_SYNC_DIR = r"C:\Users\flyxe\Desktop\FL-SYNC-SHARE"
 
 # Dossier samples
-SAMPLES_SYNC_DIR = r""  # ex: r"C:\FL-SAMPLES"
+SAMPLES_SYNC_DIR = r"C:\Users\flyxe\Desktop\FL-SAMPLES"
 SAMPLES_MAX_MB   = 30
 
 _BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".flp_bases")
