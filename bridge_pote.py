@@ -259,6 +259,8 @@ def midi_listener(loop):
 
 # ── Collecte automatique des samples depuis le .flp ──────────────────────────
 
+_sent_samples = set()
+
 def _collect_flp_samples(flp_path, loop=None):
     if not SAMPLES_SYNC_DIR:
         return
@@ -301,7 +303,8 @@ def _collect_flp_samples(flp_path, loop=None):
             if not os.path.exists(dest):
                 shutil.copy2(sp, dest)
                 print(f"\nSample collecté → FL-SAMPLES : {fname}")
-            if loop is not None:
+            if loop is not None and dest not in _sent_samples:
+                _sent_samples.add(dest)
                 rel = os.path.relpath(dest, SAMPLES_SYNC_DIR)
                 with open(dest, 'rb') as f:
                     encoded = base64.b64encode(f.read()).decode()

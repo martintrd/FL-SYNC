@@ -252,6 +252,8 @@ def midi_listener(loop):
 
 # ── Collecte automatique des samples depuis le .flp ──────────────────────────
 
+_sent_samples = set()  # chemins déjà envoyés cette session
+
 def _collect_flp_samples(flp_path, loop=None):
     """
     Extrait les samples référencés dans le .flp et les envoie directement via WebSocket.
@@ -301,8 +303,9 @@ def _collect_flp_samples(flp_path, loop=None):
             if not os.path.exists(dest):
                 shutil.copy2(sp, dest)
                 print(f"\nSample collecté → FL-SAMPLES : {fname}")
-            # Envoi direct via queue (pas d'attente du watcher)
-            if loop is not None:
+            # Envoi direct — une seule fois par session
+            if loop is not None and dest not in _sent_samples:
+                _sent_samples.add(dest)
                 rel = os.path.relpath(dest, SAMPLES_SYNC_DIR)
                 with open(dest, 'rb') as f:
                     encoded = base64.b64encode(f.read()).decode()
