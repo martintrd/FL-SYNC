@@ -7,6 +7,7 @@ import json
 import threading
 import base64
 import os
+import shutil
 import time
 import ctypes
 
@@ -19,9 +20,12 @@ MIDI_OUT       = "FL In 1"
 # Dossier partagé .flp (même chemin sur les deux PCs)
 FLP_SYNC_DIR = r""  # ex: r"C:\FL-SYNC"
 
-# Dossier samples (MÊME chemin sur les deux PCs — obligatoire pour que les chemins matchent)
+# Dossier samples (MÊME chemin sur les deux PCs)
 SAMPLES_SYNC_DIR = r""  # ex: r"C:\FL-SAMPLES"
-SAMPLES_MAX_MB   = 30   # ignore les fichiers > 30 MB
+SAMPLES_MAX_MB   = 30
+
+# Dossier interne pour stocker les versions de base (pour le merge)
+_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".flp_bases")
 
 apply_until     = 0.0
 clock_slave_until = 0.0
@@ -137,17 +141,39 @@ async def websocket_handler():
                                 continue
                             os.makedirs(FLP_SYNC_DIR, exist_ok=True)
                             filename = event.get("filename", "received.flp")
-                            dest = os.path.join(FLP_SYNC_DIR, filename)
-                            data = base64.b64decode(event["data"])
-                            with open(dest, "wb") as f:
-                                f.write(data)
-                            print(f"\nReçu : {filename}")
+                            dest    = os.path.join(FLP_SYNC_DIR, filename)
+                            remote_tmp = dest + ".remote_tmp"
+                            # Sauvegarde le fichier remote en tmp
+                            with open(remote_tmp, "wb") as f:
+                                f.write(base64.b64decode(event["data"]))
+                            # Détecte si on a des changements locaux depuis la dernière base
+                            local_dirty = (
+                                os.path.exists(dest) and
+                                os.path.exists(os.path.join(_BASE_DIR, filename)) and
+                                os.path.getmtime(dest) > os.path.getmtime(
+                                    os.path.join(_BASE_DIR, filename)
+                                )
+                            )
+                            if local_dirty:
+                                print(f"\n⚠ CONFLIT sur {filename} — merge en cours...")
+                                from merge import merge_flp, get_base
+                                base_p = get_base(filename, _BASE_DIR)
+                                _, msg = merge_flp(base_p, dest, remote_tmp, dest)
+                                print(f"\n{msg}")
+                            else:
+                                shutil.copy(remote_tmp, dest)
+                                print(f"\nReçu : {filename}")
+                            os.remove(remote_tmp)
+                            # Sauvegarde comme nouvelle base
+                            from merge import save_base
+                            save_base(dest, _BASE_DIR)
+                            final_dest = dest
                             if not _fl_playing:
                                 threading.Thread(
-                                    target=_open_flp, args=(dest,), daemon=True
+                                    target=_open_flp, args=(final_dest,), daemon=True
                                 ).start()
                             else:
-                                _pending_flp = dest
+                                _pending_flp = final_dest
                                 print("(FL joue → appliqué à l'arrêt)")
                         elif op == "SAMPLE":
                             if SAMPLES_SYNC_DIR:
@@ -257,6 +283,9 @@ def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
                     data = base64.b64encode(f.read()).decode()
                 if is_flp:
                     print(f"\nEnvoi FLP : {fname}")
+                    # Sauvegarde comme base pour le merge futur
+                    from merge import save_base
+                    save_base(path, _BASE_DIR)
                     asyncio.run_coroutine_threadsafe(
                         event_queue.put(("FLP", data, fname)), loop
                     )

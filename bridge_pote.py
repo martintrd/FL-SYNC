@@ -7,6 +7,7 @@ import json
 import threading
 import base64
 import os
+import shutil
 import time
 import ctypes
 
@@ -19,9 +20,11 @@ MIDI_OUT       = "FL In 1"
 # Dossier partagé .flp
 FLP_SYNC_DIR = r""  # ex: r"C:\FL-SYNC"
 
-# Dossier samples (MÊME chemin que PC A — obligatoire pour que les chemins matchent)
+# Dossier samples
 SAMPLES_SYNC_DIR = r""  # ex: r"C:\FL-SAMPLES"
 SAMPLES_MAX_MB   = 30
+
+_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".flp_bases")
 
 apply_until       = 0.0
 clock_slave_until = 0.0
@@ -146,12 +149,30 @@ async def websocket_handler():
                             if not FLP_SYNC_DIR:
                                 continue
                             os.makedirs(FLP_SYNC_DIR, exist_ok=True)
-                            filename = event.get("filename", "received.flp")
-                            dest = os.path.join(FLP_SYNC_DIR, filename)
-                            data = base64.b64decode(event["data"])
-                            with open(dest, "wb") as f:
-                                f.write(data)
-                            print(f"\nReçu : {filename}")
+                            filename   = event.get("filename", "received.flp")
+                            dest       = os.path.join(FLP_SYNC_DIR, filename)
+                            remote_tmp = dest + ".remote_tmp"
+                            with open(remote_tmp, "wb") as f:
+                                f.write(base64.b64decode(event["data"]))
+                            local_dirty = (
+                                os.path.exists(dest) and
+                                os.path.exists(os.path.join(_BASE_DIR, filename)) and
+                                os.path.getmtime(dest) > os.path.getmtime(
+                                    os.path.join(_BASE_DIR, filename)
+                                )
+                            )
+                            if local_dirty:
+                                print(f"\n⚠ CONFLIT sur {filename} — merge en cours...")
+                                from merge import merge_flp, get_base
+                                base_p = get_base(filename, _BASE_DIR)
+                                _, msg = merge_flp(base_p, dest, remote_tmp, dest)
+                                print(f"\n{msg}")
+                            else:
+                                shutil.copy(remote_tmp, dest)
+                                print(f"\nReçu : {filename}")
+                            os.remove(remote_tmp)
+                            from merge import save_base
+                            save_base(dest, _BASE_DIR)
                             if not _fl_playing:
                                 threading.Thread(
                                     target=_open_flp, args=(dest,), daemon=True
@@ -268,6 +289,8 @@ def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
                     data = base64.b64encode(f.read()).decode()
                 if is_flp:
                     print(f"\nEnvoi FLP : {fname}")
+                    from merge import save_base
+                    save_base(path, _BASE_DIR)
                     asyncio.run_coroutine_threadsafe(
                         event_queue.put(("FLP", data, fname)), loop
                     )
