@@ -6,6 +6,7 @@ import websockets
 import json
 import threading
 import base64
+import hashlib
 import os
 import shutil
 import time
@@ -140,19 +141,16 @@ async def websocket_handler():
                             if not FLP_SYNC_DIR:
                                 continue
                             os.makedirs(FLP_SYNC_DIR, exist_ok=True)
-                            filename = event.get("filename", "received.flp")
-                            dest    = os.path.join(FLP_SYNC_DIR, filename)
+                            filename   = event.get("filename", "received.flp")
+                            dest       = os.path.join(FLP_SYNC_DIR, filename)
                             remote_tmp = dest + ".remote_tmp"
-                            # Sauvegarde le fichier remote en tmp
                             with open(remote_tmp, "wb") as f:
                                 f.write(base64.b64decode(event["data"]))
-                            # Détecte si on a des changements locaux depuis la dernière base
+                            # Conflit : hash local ≠ hash de la dernière base connue
                             local_dirty = (
                                 os.path.exists(dest) and
-                                os.path.exists(os.path.join(_BASE_DIR, filename)) and
-                                os.path.getmtime(dest) > os.path.getmtime(
-                                    os.path.join(_BASE_DIR, filename)
-                                )
+                                filename in _base_hashes and
+                                _md5(dest) != _base_hashes[filename]
                             )
                             if local_dirty:
                                 print(f"\n⚠ CONFLIT sur {filename} — merge en cours...")
@@ -164,24 +162,24 @@ async def websocket_handler():
                                 shutil.copy(remote_tmp, dest)
                                 print(f"\nReçu : {filename}")
                             os.remove(remote_tmp)
-                            # Sauvegarde comme nouvelle base
+                            _base_hashes[filename] = _md5(dest)
                             from merge import save_base
                             save_base(dest, _BASE_DIR)
-                            final_dest = dest
                             if not _fl_playing:
                                 threading.Thread(
-                                    target=_open_flp, args=(final_dest,), daemon=True
+                                    target=_open_flp, args=(dest,), daemon=True
                                 ).start()
                             else:
-                                _pending_flp = final_dest
+                                _pending_flp = dest
                                 print("(FL joue → appliqué à l'arrêt)")
                         elif op == "SAMPLE":
                             if SAMPLES_SYNC_DIR:
-                                rel = event.get("rel", "")
+                                rel  = event.get("rel", "")
                                 dest = os.path.join(SAMPLES_SYNC_DIR, rel)
                                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                                 with open(dest, "wb") as f:
                                     f.write(base64.b64decode(event["data"]))
+                                _sent_samples.add(dest)  # anti-loop : ne pas renvoyer
                                 print(f"\nSample reçu : {rel}")
                         elif op == "BPM":
                             bpm = event["bpm"]
@@ -252,7 +250,12 @@ def midi_listener(loop):
 
 # ── Collecte automatique des samples depuis le .flp ──────────────────────────
 
-_sent_samples = set()  # chemins déjà envoyés cette session
+_sent_samples = set()   # chemins déjà envoyés cette session
+_base_hashes  = {}      # {filename: md5} dernier état synchronisé
+
+def _md5(path):
+    with open(path, 'rb') as f:
+        return hashlib.md5(f.read()).hexdigest()
 
 def _collect_flp_samples(flp_path, loop=None):
     """
@@ -352,9 +355,9 @@ def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
                     data = base64.b64encode(f.read()).decode()
                 if is_flp:
                     print(f"\nEnvoi FLP : {fname}")
+                    _base_hashes[fname] = _md5(path)
                     from merge import save_base
                     save_base(path, _BASE_DIR)
-                    # Collecte et envoie les samples référencés dans le .flp
                     _collect_flp_samples(path, loop)
                     asyncio.run_coroutine_threadsafe(
                         event_queue.put(("FLP", data, fname)), loop

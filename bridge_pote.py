@@ -6,6 +6,7 @@ import websockets
 import json
 import threading
 import base64
+import hashlib
 import os
 import shutil
 import time
@@ -156,10 +157,8 @@ async def websocket_handler():
                                 f.write(base64.b64decode(event["data"]))
                             local_dirty = (
                                 os.path.exists(dest) and
-                                os.path.exists(os.path.join(_BASE_DIR, filename)) and
-                                os.path.getmtime(dest) > os.path.getmtime(
-                                    os.path.join(_BASE_DIR, filename)
-                                )
+                                filename in _base_hashes and
+                                _md5(dest) != _base_hashes[filename]
                             )
                             if local_dirty:
                                 print(f"\n⚠ CONFLIT sur {filename} — merge en cours...")
@@ -171,6 +170,7 @@ async def websocket_handler():
                                 shutil.copy(remote_tmp, dest)
                                 print(f"\nReçu : {filename}")
                             os.remove(remote_tmp)
+                            _base_hashes[filename] = _md5(dest)
                             from merge import save_base
                             save_base(dest, _BASE_DIR)
                             if not _fl_playing:
@@ -182,11 +182,12 @@ async def websocket_handler():
                                 print("(FL joue → appliqué à l'arrêt)")
                         elif op == "SAMPLE":
                             if SAMPLES_SYNC_DIR:
-                                rel = event.get("rel", "")
+                                rel  = event.get("rel", "")
                                 dest = os.path.join(SAMPLES_SYNC_DIR, rel)
                                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                                 with open(dest, "wb") as f:
                                     f.write(base64.b64decode(event["data"]))
+                                _sent_samples.add(dest)
                                 print(f"\nSample reçu : {rel}")
                         elif op == "BPM":
                             bpm = event["bpm"]
@@ -260,6 +261,11 @@ def midi_listener(loop):
 # ── Collecte automatique des samples depuis le .flp ──────────────────────────
 
 _sent_samples = set()
+_base_hashes  = {}
+
+def _md5(path):
+    with open(path, 'rb') as f:
+        return hashlib.md5(f.read()).hexdigest()
 
 def _collect_flp_samples(flp_path, loop=None):
     if not SAMPLES_SYNC_DIR:
@@ -349,6 +355,7 @@ def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
                     data = base64.b64encode(f.read()).decode()
                 if is_flp:
                     print(f"\nEnvoi FLP : {fname}")
+                    _base_hashes[fname] = _md5(path)
                     from merge import save_base
                     save_base(path, _BASE_DIR)
                     _collect_flp_samples(path, loop)
