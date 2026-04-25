@@ -253,34 +253,53 @@ def midi_listener(loop):
 # ── Collecte automatique des samples depuis le .flp ──────────────────────────
 
 def _collect_flp_samples(flp_path):
-    """Parse le .flp avec pyflp et copie tous les samples dans SAMPLES_SYNC_DIR."""
+    """
+    Extrait les chemins de samples du .flp (UTF-16 LE) et les copie dans SAMPLES_SYNC_DIR.
+    """
     if not SAMPLES_SYNC_DIR:
         return
+    import re
     try:
-        import pyflp
-        project = pyflp.parse(flp_path)
-        for channel in project.channels:
-            try:
-                sample_path = getattr(channel, 'sample_path', None)
-                if not sample_path:
-                    continue
-                sample_path = str(sample_path)
-                if not os.path.isfile(sample_path):
-                    continue
-                # Déjà dans FL-SAMPLES → rien à faire
-                if os.path.abspath(sample_path).startswith(
-                        os.path.abspath(SAMPLES_SYNC_DIR)):
-                    continue
-                fname = os.path.basename(sample_path)
-                dest  = os.path.join(SAMPLES_SYNC_DIR, fname)
-                if not os.path.exists(dest):
-                    os.makedirs(SAMPLES_SYNC_DIR, exist_ok=True)
-                    shutil.copy2(sample_path, dest)
-                    print(f"\nSample collecté → FL-SAMPLES : {fname}")
-            except Exception:
-                pass
-    except ImportError:
-        pass  # pyflp pas installé, on ignore
+        with open(flp_path, 'rb') as f:
+            data = f.read()
+
+        audio_exts = ['wav', 'mp3', 'flac', 'ogg', 'aiff', 'aif', 'w64']
+        paths = set()
+
+        drive_pat = re.compile(r"[A-Za-z]:\\")
+        for ext in audio_exts:
+            needle = ("." + ext).encode("utf-16-le")
+            pos = 0
+            while True:
+                idx = data.find(needle, pos)
+                if idx == -1:
+                    break
+                j = idx
+                while j >= 2:
+                    if j >= 4 and data[j-4] == 0 and data[j-3] == 0:
+                        break
+                    j -= 2
+                chunk = data[j:idx + len(needle)]
+                try:
+                    raw = chunk.decode("utf-16-le", errors="ignore").strip(chr(0))
+                    m = drive_pat.search(raw)
+                    if m:
+                        paths.add(raw[m.start():])
+                except Exception:
+                    pass
+                pos = idx + 1
+
+        os.makedirs(SAMPLES_SYNC_DIR, exist_ok=True)
+        for sp in paths:
+            if not os.path.isfile(sp):
+                continue
+            if os.path.abspath(sp).startswith(os.path.abspath(SAMPLES_SYNC_DIR)):
+                continue
+            fname = os.path.basename(sp)
+            dest  = os.path.join(SAMPLES_SYNC_DIR, fname)
+            if not os.path.exists(dest):
+                shutil.copy2(sp, dest)
+                print(f"\nSample collecté → FL-SAMPLES : {fname}")
     except Exception as e:
         print(f"\nCollect samples: {e}")
 
