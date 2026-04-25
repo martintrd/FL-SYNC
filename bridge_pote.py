@@ -259,7 +259,7 @@ def midi_listener(loop):
 
 # ── Collecte automatique des samples depuis le .flp ──────────────────────────
 
-def _collect_flp_samples(flp_path):
+def _collect_flp_samples(flp_path, loop=None):
     if not SAMPLES_SYNC_DIR:
         return
     import re
@@ -293,13 +293,22 @@ def _collect_flp_samples(flp_path):
         for sp in paths:
             if not os.path.isfile(sp):
                 continue
-            if os.path.abspath(sp).startswith(os.path.abspath(SAMPLES_SYNC_DIR)):
+            size = os.path.getsize(sp)
+            if size > SAMPLES_MAX_MB * 1024 * 1024:
                 continue
             fname = os.path.basename(sp)
             dest  = os.path.join(SAMPLES_SYNC_DIR, fname)
             if not os.path.exists(dest):
                 shutil.copy2(sp, dest)
                 print(f"\nSample collecté → FL-SAMPLES : {fname}")
+            if loop is not None:
+                rel = os.path.relpath(dest, SAMPLES_SYNC_DIR)
+                with open(dest, 'rb') as f:
+                    encoded = base64.b64encode(f.read()).decode()
+                asyncio.run_coroutine_threadsafe(
+                    event_queue.put(("SAMPLE", encoded, rel)), loop
+                )
+                print(f"\nEnvoi sample : {rel}")
     except Exception as e:
         print(f"\nCollect samples: {e}")
 
@@ -339,7 +348,7 @@ def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
                     print(f"\nEnvoi FLP : {fname}")
                     from merge import save_base
                     save_base(path, _BASE_DIR)
-                    _collect_flp_samples(path)
+                    _collect_flp_samples(path, loop)
                     asyncio.run_coroutine_threadsafe(
                         event_queue.put(("FLP", data, fname)), loop
                     )
