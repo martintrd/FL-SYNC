@@ -306,6 +306,7 @@ def _collect_flp_samples(flp_path):
 # ── Sync watcher (.flp + audio dans FLP_SYNC_DIR, samples dans SAMPLES_SYNC_DIR)
 
 _AUDIO_EXTS = {'.wav', '.mp3', '.flac', '.ogg', '.aiff', '.aif', '.w64'}
+_WATCHER_START = time.time()
 
 def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
     for root, _, files in os.walk(base_dir):
@@ -323,7 +324,8 @@ def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
                 continue
             rel = os.path.relpath(path, base_dir)
             key = base_dir + "|" + rel
-            if key in mtimes and mtimes[key] != mtime:
+            is_new_after_start = key not in mtimes and mtime > _WATCHER_START
+            if (key in mtimes and mtimes[key] != mtime) or is_new_after_start:
                 mtimes[key] = mtime
                 if time.time() < flp_slave_until and is_flp_dir and is_flp:
                     continue

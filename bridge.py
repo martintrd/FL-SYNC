@@ -306,6 +306,7 @@ def _collect_flp_samples(flp_path):
 # ── Sync watcher (.flp + audio dans FLP_SYNC_DIR, samples dans SAMPLES_SYNC_DIR)
 
 _AUDIO_EXTS = {'.wav', '.mp3', '.flac', '.ogg', '.aiff', '.aif', '.w64'}
+_WATCHER_START = time.time()  # timestamp de démarrage pour détecter les nouveaux fichiers
 
 def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
     """Scan un dossier récursivement et envoie les fichiers nouveaux/modifiés."""
@@ -324,7 +325,9 @@ def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
                 continue
             rel = os.path.relpath(path, base_dir)
             key = base_dir + "|" + rel
-            if key in mtimes and mtimes[key] != mtime:
+            # Nouveau fichier créé APRÈS le démarrage → envoyer tout de suite
+            is_new_after_start = key not in mtimes and mtime > _WATCHER_START
+            if (key in mtimes and mtimes[key] != mtime) or is_new_after_start:
                 mtimes[key] = mtime
                 if time.time() < flp_slave_until and is_flp_dir and is_flp:
                     continue
