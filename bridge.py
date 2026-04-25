@@ -18,10 +18,10 @@ SCRIPT_MIDI_IN = "FL In 0"
 MIDI_OUT       = "FL In 1"
 
 # Dossier partagé .flp (même chemin sur les deux PCs)
-FLP_SYNC_DIR = r""  # ex: r"C:\FL-SYNC"
+FLP_SYNC_DIR = r"C:\Users\flyxe\Desktop\FL-SYNC-SHARE"
 
 # Dossier samples (MÊME chemin sur les deux PCs)
-SAMPLES_SYNC_DIR = r""  # ex: r"C:\FL-SAMPLES"
+SAMPLES_SYNC_DIR = r"C:\Users\flyxe\Desktop\FL-SAMPLES"
 SAMPLES_MAX_MB   = 30
 
 # Dossier interne pour stocker les versions de base (pour le merge)
