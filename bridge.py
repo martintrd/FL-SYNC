@@ -250,6 +250,40 @@ def midi_listener(loop):
                     path, _pending_flp = _pending_flp, None
                     threading.Thread(target=_open_flp, args=(path,), daemon=True).start()
 
+# ── Collecte automatique des samples depuis le .flp ──────────────────────────
+
+def _collect_flp_samples(flp_path):
+    """Parse le .flp avec pyflp et copie tous les samples dans SAMPLES_SYNC_DIR."""
+    if not SAMPLES_SYNC_DIR:
+        return
+    try:
+        import pyflp
+        project = pyflp.parse(flp_path)
+        for channel in project.channels:
+            try:
+                sample_path = getattr(channel, 'sample_path', None)
+                if not sample_path:
+                    continue
+                sample_path = str(sample_path)
+                if not os.path.isfile(sample_path):
+                    continue
+                # Déjà dans FL-SAMPLES → rien à faire
+                if os.path.abspath(sample_path).startswith(
+                        os.path.abspath(SAMPLES_SYNC_DIR)):
+                    continue
+                fname = os.path.basename(sample_path)
+                dest  = os.path.join(SAMPLES_SYNC_DIR, fname)
+                if not os.path.exists(dest):
+                    os.makedirs(SAMPLES_SYNC_DIR, exist_ok=True)
+                    shutil.copy2(sample_path, dest)
+                    print(f"\nSample collecté → FL-SAMPLES : {fname}")
+            except Exception:
+                pass
+    except ImportError:
+        pass  # pyflp pas installé, on ignore
+    except Exception as e:
+        print(f"\nCollect samples: {e}")
+
 # ── Sync watcher (.flp + audio dans FLP_SYNC_DIR, samples dans SAMPLES_SYNC_DIR)
 
 _AUDIO_EXTS = {'.wav', '.mp3', '.flac', '.ogg', '.aiff', '.aif', '.w64'}
@@ -283,9 +317,10 @@ def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
                     data = base64.b64encode(f.read()).decode()
                 if is_flp:
                     print(f"\nEnvoi FLP : {fname}")
-                    # Sauvegarde comme base pour le merge futur
                     from merge import save_base
                     save_base(path, _BASE_DIR)
+                    # Collecte les samples référencés dans le .flp
+                    _collect_flp_samples(path)
                     asyncio.run_coroutine_threadsafe(
                         event_queue.put(("FLP", data, fname)), loop
                     )
