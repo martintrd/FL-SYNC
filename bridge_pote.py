@@ -16,8 +16,12 @@ MIDI_IN        = "FL Out 1"
 SCRIPT_MIDI_IN = "FL In 0"
 MIDI_OUT       = "FL In 1"
 
-# Dossier partagé : enregistre tes .flp ici ET les fichiers du pote arrivent ici
+# Dossier partagé .flp
 FLP_SYNC_DIR = r""  # ex: r"C:\FL-SYNC"
+
+# Dossier samples (MÊME chemin que PC A — obligatoire pour que les chemins matchent)
+SAMPLES_SYNC_DIR = r""  # ex: r"C:\FL-SAMPLES"
+SAMPLES_MAX_MB   = 30
 
 apply_until       = 0.0
 clock_slave_until = 0.0
@@ -120,7 +124,10 @@ async def websocket_handler():
                             print(f"\nEnvoyé BPM : {msg[1]}")
                         elif isinstance(msg, tuple) and msg[0] == "FLP":
                             payload = {"op": "FLP", "data": msg[1], "filename": msg[2], "from": MY_ID}
-                            print(f"\nEnvoyé : {msg[2]}")
+                            print(f"\nEnvoyé FLP : {msg[2]}")
+                        elif isinstance(msg, tuple) and msg[0] == "SAMPLE":
+                            payload = {"op": "SAMPLE", "data": msg[1], "rel": msg[2], "from": MY_ID}
+                            print(f"\nEnvoyé sample : {msg[2]}")
                         else:
                             payload = {"op": msg, "from": MY_ID}
                             print(f"\nEnvoyé : {msg}")
@@ -152,6 +159,14 @@ async def websocket_handler():
                             else:
                                 _pending_flp = dest
                                 print("(FL joue → appliqué à l'arrêt)")
+                        elif op == "SAMPLE":
+                            if SAMPLES_SYNC_DIR:
+                                rel = event.get("rel", "")
+                                dest = os.path.join(SAMPLES_SYNC_DIR, rel)
+                                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                                with open(dest, "wb") as f:
+                                    f.write(base64.b64decode(event["data"]))
+                                print(f"\nSample reçu : {rel}")
                         elif op == "BPM":
                             bpm = event["bpm"]
                             print(f"\nReçu BPM : {bpm}")
@@ -221,6 +236,46 @@ def midi_listener(loop):
                     _pending_flp = None
                     threading.Thread(target=_open_flp, args=(path,), daemon=True).start()
 
+# ── Samples watcher ───────────────────────────────────────────────────────────
+
+_AUDIO_EXTS = {'.wav', '.mp3', '.flac', '.ogg', '.aiff', '.aif', '.w64'}
+
+def samples_watcher(loop):
+    if not SAMPLES_SYNC_DIR:
+        return
+    os.makedirs(SAMPLES_SYNC_DIR, exist_ok=True)
+    print(f"Surveillance samples : {SAMPLES_SYNC_DIR}")
+    mtimes = {}
+    while True:
+        time.sleep(2)
+        try:
+            for root, _, files in os.walk(SAMPLES_SYNC_DIR):
+                for fname in files:
+                    if not any(fname.lower().endswith(e) for e in _AUDIO_EXTS):
+                        continue
+                    path = os.path.join(root, fname)
+                    rel  = os.path.relpath(path, SAMPLES_SYNC_DIR)
+                    try:
+                        mtime = os.path.getmtime(path)
+                        size  = os.path.getsize(path)
+                    except Exception:
+                        continue
+                    if rel in mtimes and mtimes[rel] != mtime:
+                        mtimes[rel] = mtime
+                        if size > SAMPLES_MAX_MB * 1024 * 1024:
+                            print(f"\nSample ignoré (>{SAMPLES_MAX_MB}MB) : {rel}")
+                            continue
+                        time.sleep(0.2)
+                        with open(path, "rb") as f:
+                            data = base64.b64encode(f.read()).decode()
+                        asyncio.run_coroutine_threadsafe(
+                            event_queue.put(("SAMPLE", data, rel)), loop
+                        )
+                    else:
+                        mtimes[rel] = mtime
+        except Exception:
+            pass
+
 # ── FLP watcher ───────────────────────────────────────────────────────────────
 
 def flp_watcher(loop):
@@ -267,6 +322,7 @@ async def main():
     midi_out_port = mido.open_output(MIDI_OUT)
     loop = asyncio.get_event_loop()
     threading.Thread(target=clock_generator_thread, daemon=True).start()
+    threading.Thread(target=samples_watcher, args=(loop,), daemon=True).start()
     threading.Thread(target=flp_watcher,     args=(loop,), daemon=True).start()
     threading.Thread(target=script_listener,  args=(loop,), daemon=True).start()
     threading.Thread(target=midi_listener,    args=(loop,), daemon=True).start()
