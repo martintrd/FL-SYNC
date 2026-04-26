@@ -1,0 +1,7 @@
+{
+  "SERVER": "ws://176.159.207.97:8080",
+  "MY_ID": "pc_b",
+  "FLP_SYNC_DIR": "C:\\Users\\[TON_USERNAME]\\Desktop\\FL-SYNC-SHARE",
+  "SAMPLES_SYNC_DIR": "C:\\Users\\[TON_USERNAME]\\Desktop\\FL-SAMPLES",
+  "SAMPLES_MAX_MB": 30
+}

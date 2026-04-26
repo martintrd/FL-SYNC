@@ -1,0 +1,7 @@
+{
+  "SERVER": "ws://localhost:8080",
+  "MY_ID": "pc_a",
+  "FLP_SYNC_DIR": "C:\\Users\\flyxe\\Desktop\\FL-SYNC-SHARE",
+  "SAMPLES_SYNC_DIR": "C:\\Users\\flyxe\\Desktop\\FL-SAMPLES",
+  "SAMPLES_MAX_MB": 30
+}
