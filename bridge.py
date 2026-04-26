@@ -14,7 +14,10 @@ import ctypes
 
 # ── Config (peut aussi être dans config.json) ─────────────────────────────────
 
-_CFG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) \
+       else os.path.dirname(os.path.abspath(__file__))
+
+_CFG_FILE = os.path.join(_DIR, "config.json")
 if os.path.exists(_CFG_FILE):
     with open(_CFG_FILE) as f:
         _cfg = json.load(f)
@@ -27,7 +30,7 @@ FLP_SYNC_DIR     = _cfg.get("FLP_SYNC_DIR",     r"C:\Users\flyxe\Desktop\FL-SYNC
 SAMPLES_SYNC_DIR = _cfg.get("SAMPLES_SYNC_DIR", r"C:\Users\flyxe\Desktop\FL-SAMPLES")
 SAMPLES_MAX_MB   = _cfg.get("SAMPLES_MAX_MB",   30)
 
-_BASE_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".flp_bases")
+_BASE_DIR    = os.path.join(_DIR, ".flp_bases")
 _sent_samples = set()
 _base_hashes  = {}
 flp_slave_until = 0.0
