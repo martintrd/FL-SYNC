@@ -355,7 +355,8 @@ def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
                     data = base64.b64encode(f.read()).decode()
                 if is_flp:
                     print(f"\nEnvoi FLP : {fname}")
-                    _base_hashes[fname] = _md5(path)
+                    # NE PAS mettre à jour _base_hashes ici :
+                    # la base = dernier état reçu du réseau, pas ce qu'on envoie
                     from merge import save_base
                     save_base(path, _BASE_DIR)
                     _collect_flp_samples(path, loop)
@@ -363,6 +364,9 @@ def _scan_dir(base_dir, mtimes, loop, is_flp_dir=False):
                         event_queue.put(("FLP", data, fname)), loop
                     )
                 else:
+                    if path in _sent_samples:
+                        continue  # anti-loop : sample déjà envoyé
+                    _sent_samples.add(path)
                     print(f"\nEnvoi sample : {rel}")
                     asyncio.run_coroutine_threadsafe(
                         event_queue.put(("SAMPLE", data, rel)), loop
